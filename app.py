@@ -7,25 +7,15 @@ import socket
 from concurrent.futures import ThreadPoolExecutor
 from collections import defaultdict
 import os
-from flask import Flask, jsonify
-
-app = Flask(__name__)
 
 # Configuration
 MAX_FINAL_PROXIES = 200
-PHASE1_TIMEOUT = 5
-PHASE2_TIMEOUT = 45
-MAX_WORKERS = 50
-API_PORT = 3000
-
-# Global variable to store working proxies
-working_proxies = {
-    "http": [],
-    "socks4": [],
-    "socks5": []
-}
+PHASE1_TIMEOUT = 8
+PHASE2_TIMEOUT = 30
+MAX_WORKERS = 200
 
 USER_AGENTS = [
+    # Chrome, Firefox, Safari, Mobile, etc.
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -119,6 +109,7 @@ TEST_URLS = [
     "https://ip.360.cn/IPShare/info",
 ]
 
+
 def get_random_user_agent():
     return random.choice(USER_AGENTS)
 
@@ -195,7 +186,6 @@ def stability_test_proxy(proxy, proxy_type):
     return True
 
 def update_proxies():
-    global working_proxies
     start = time.time()
     proxies_by_type = fetch_proxies()
 
@@ -234,8 +224,6 @@ def update_proxies():
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             executor.map(phase2_worker, phase1)
 
-        working_proxies[ptype] = final
-
         with open(f"proxies_{ptype}.json", "w") as f:
             json.dump(final, f, indent=2)
 
@@ -243,56 +231,5 @@ def update_proxies():
 
     print(f"\n🎉 All done in {time.time() - start:.2f}s")
 
-# API Endpoints
-@app.route('/')
-def index():
-    return """
-    <h1>Proxy Scraper API</h1>
-    <p>Available endpoints:</p>
-    <ul>
-        <li><a href="/proxies">/proxies</a> - Get all proxies</li>
-        <li><a href="/proxies/http">/proxies/http</a> - Get HTTP proxies</li>
-        <li><a href="/proxies/socks4">/proxies/socks4</a> - Get SOCKS4 proxies</li>
-        <li><a href="/proxies/socks5">/proxies/socks5</a> - Get SOCKS5 proxies</li>
-        <li><a href="/update">/update</a> - Update proxy list</li>
-    </ul>
-    """
-
-@app.route('/proxies')
-def get_all_proxies():
-    return jsonify({
-        "http": working_proxies["http"],
-        "socks4": working_proxies["socks4"],
-        "socks5": working_proxies["socks5"],
-        "count": {
-            "http": len(working_proxies["http"]),
-            "socks4": len(working_proxies["socks4"]),
-            "socks5": len(working_proxies["socks5"]),
-            "total": len(working_proxies["http"]) + len(working_proxies["socks4"]) + len(working_proxies["socks5"])
-        }
-    })
-
-@app.route('/proxies/<proxy_type>')
-def get_proxies_by_type(proxy_type):
-    if proxy_type not in working_proxies:
-        return jsonify({"error": "Invalid proxy type. Use http, socks4, or socks5"}), 400
-    return jsonify({
-        "type": proxy_type,
-        "proxies": working_proxies[proxy_type],
-        "count": len(working_proxies[proxy_type])
-    })
-
-@app.route('/update')
-def update_proxy_list():
-    threading.Thread(target=update_proxies).start()
-    return jsonify({"status": "Proxy update started in background"})
-
-def run_api():
-    app.run(host='0.0.0.0', port=API_PORT)
-
 if __name__ == "__main__":
-    # Start the proxy updater in background
-    threading.Thread(target=update_proxies).start()
-    
-    # Start the API
-    run_api()
+    update_proxies()

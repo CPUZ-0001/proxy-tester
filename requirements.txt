@@ -1,0 +1,5 @@
+Flask
+requests
+schedule
+speedtest-cli
+gunicorn

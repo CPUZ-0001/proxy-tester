@@ -25,7 +25,7 @@ load_dotenv()
 
 # ========== ENV CONFIG ==========
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-OWNER_ID = int(os.getenv("OWNER_ID"))
+ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
 DUMP_CHANNEL_ID = int(os.getenv("DUMP_CHANNEL_ID"))
 PUBLIC_CHANNEL_ID = int(os.getenv("PUBLIC_CHANNEL_ID"))
 CHANNEL_LINK = os.getenv("CHANNEL_LINK")
@@ -102,7 +102,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Admin welcome
-    if user_id == OWNER_ID:
+    if user_id in ADMIN_IDS:
         await update.message.reply_text(
             "🎬 Send a movie poster first (with optional caption), then the movie file."
         )
@@ -121,7 +121,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========== POSTER HANDLER ==========
 async def handle_poster_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id != OWNER_ID:
+    if user_id not in ADMIN_IDS:
+
         return
 
     photo = update.message.photo[-1]
@@ -169,7 +170,8 @@ async def handle_reply_choice(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = update.effective_user.id
     text = update.message.text
 
-    if user_id != OWNER_ID:
+    if user_id not in ADMIN_IDS:
+
         await update.message.reply_text("🚫 Not authorized.")
         return
 
@@ -332,7 +334,8 @@ async def broadcast_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     message = update.message
 
-    if user_id != OWNER_ID:
+    if user_id not in ADMIN_IDS:
+
         await message.reply_text("⛔️ You are not authorized to use this command!")
         return
 

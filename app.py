@@ -1,235 +1,421 @@
-import requests
-import random
-import json
-import time
-import threading
-import socket
-from concurrent.futures import ThreadPoolExecutor
-from collections import defaultdict
+import logging
+import uuid
 import os
+from pymongo import MongoClient
+from telegram.error import BadRequest
+from telegram import ReplyKeyboardRemove
+from telegram.error import Forbidden
+from telegram.ext import ContextTypes
+from dotenv import load_dotenv
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup,
+    ReplyKeyboardMarkup, KeyboardButton
+)
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup,
+    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove,
+    Message,   # ✅ Add this
+)
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
+    ContextTypes, MessageHandler, filters
+)
 
-# Configuration
-MAX_FINAL_PROXIES = 200
-PHASE1_TIMEOUT = 8
-PHASE2_TIMEOUT = 30
-MAX_WORKERS = 200
+load_dotenv()
 
-USER_AGENTS = [
-    # Chrome, Firefox, Safari, Mobile, etc.
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/120.0",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1",
-]
+# ========== ENV CONFIG ==========
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OWNER_ID = int(os.getenv("OWNER_ID"))
+DUMP_CHANNEL_ID = int(os.getenv("DUMP_CHANNEL_ID"))
+PUBLIC_CHANNEL_ID = int(os.getenv("PUBLIC_CHANNEL_ID"))
+CHANNEL_LINK = os.getenv("CHANNEL_LINK")
 
-PROXY_SOURCES = [
-    "https://api.proxyscrape.com/v4/free-proxy-list/get?request=displayproxies&protocol=http&timeout=10000&country=all&limit=2000",
-    "https://api.proxyscrape.com/v4/free-proxy-list/get?request=displayproxies&protocol=socks4&timeout=10000&country=all&limit=2000",
-    "https://api.proxyscrape.com/v4/free-proxy-list/get?request=displayproxies&protocol=socks5&timeout=10000&country=all&limit=2000",
-    "https://proxylist.geonode.com/api/proxy-list?limit=500&page=1&sort_by=lastChecked&sort_type=desc",
-    "https://www.proxy-list.download/api/v1/get?type=https",
-    "https://www.proxy-list.download/api/v1/get?type=socks5",
-    "https://proxy-spider.com/api/proxies.example.txt",
-    "https://raw.githubusercontent.com/almroot/proxylist/master/list.txt",
-    "https://raw.githubusercontent.com/B4RC0DE-TM/proxy-list/main/HTTP.txt",
-    "https://raw.githubusercontent.com/Anonym0usWork1221/Free-Proxies/main/proxy_files/http_proxies.txt",
-    "https://raw.githubusercontent.com/Anonym0usWork1221/Free-Proxies/main/proxy_files/socks4_proxies.txt",
-    "https://raw.githubusercontent.com/Anonym0usWork1221/Free-Proxies/main/proxy_files/socks5_proxies.txt",
-    "https://raw.githubusercontent.com/zevtyardt/proxy-list/main/http.txt",
-    "https://raw.githubusercontent.com/zevtyardt/proxy-list/main/socks4.txt",
-    "https://raw.githubusercontent.com/zevtyardt/proxy-list/main/socks5.txt",
-    "https://raw.githubusercontent.com/ErcinDedeoglu/proxies/main/proxies/http.txt",
-    "https://raw.githubusercontent.com/ErcinDedeoglu/proxies/main/proxies/socks4.txt",
-    "https://raw.githubusercontent.com/ErcinDedeoglu/proxies/main/proxies/socks5.txt",
-    "https://raw.githubusercontent.com/ProxyScraper/ProxyScraper/main/socks4.txt",
-    "https://raw.githubusercontent.com/ProxyScraper/ProxyScraper/main/socks5.txt",
-    "https://raw.githubusercontent.com/mmpx12/proxy-list/master/http.txt",
-    "https://raw.githubusercontent.com/mmpx12/proxy-list/master/socks4.txt",
-    "https://raw.githubusercontent.com/mmpx12/proxy-list/master/socks5.txt",
-    "https://spys.me/proxy.txt",
-    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
-    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks4.txt",
-    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt",
-    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies_anonymous/http.txt",
-    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies_anonymous/socks4.txt",
-    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies_anonymous/socks5.txt",
-    "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt",
-    "https://raw.githubusercontent.com/roosterkid/openproxylist/main/SOCKS5_RAW.txt",
-    "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
-    "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks4.txt",
-    "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks5.txt",
-    "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
-    "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/socks4.txt",
-    "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/socks5.txt",
-    "https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/http.txt",
-    "https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/socks4.txt",
-    "https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/socks5.txt",
-    "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
-    "https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt",
-    "https://raw.githubusercontent.com/proxy4parsing/proxy-list/main/http.txt",
-    "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
-    "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks4.txt",
-    "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks5.txt",
-    "https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt",
-    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
-    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks4.txt",
-    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt",
-    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies_anonymous/http.txt",
-    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies_anonymous/socks4.txt",
-    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies_anonymous/socks5.txt",
-    "https://raw.githubusercontent.com/proxy4parsing/proxy-list/main/http.txt",
-    "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
-    "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/https.txt",
-    "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/socks4.txt",
-    "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/socks5.txt",
-    "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt",
-    "https://raw.githubusercontent.com/roosterkid/openproxylist/main/SOCKS5_RAW.txt",
-    "https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/proxies.txt",
-    "https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/http.txt",
-    "https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/socks4.txt",
-    "https://raw.githubusercontent.com/rdavydov/proxy-list/main/proxies/socks5.txt"
-  ]
+MONGO_URI = os.getenv("MONGO_URI")
+DB_NAME = "Movie"
+COLLECTION = "movies"
+ALL_USERS_COLLECTION = "users"
 
-TEST_URLS = [
-    "https://httpbin.org/ip",
-    "https://api.ipify.org?format=json",
-    "https://icanhazip.com",
-    "https://ident.me",
-    "https://ifconfig.me/ip",
-    "https://ipinfo.io/ip",
-    "https://ip.seeip.org/jsonip?",
-    "https://api.myip.com",
-    "https://checkip.amazonaws.com",
-    "https://wtfismyip.com/text",
-    "https://ipwho.is",
-    "https://ipapi.co/ip/",
-    "https://ip.tyk.nu",
-    "https://ip.360.cn/IPShare/info",
-]
+# ========== LOGGING ==========
+logging.basicConfig(level=logging.INFO)
 
+# ========== MONGO SETUP ==========
+mongo_client = MongoClient(MONGO_URI)
+db = mongo_client[DB_NAME]
+movie_collection = db[COLLECTION]
+all_users_collection = db[ALL_USERS_COLLECTION]
 
-def get_random_user_agent():
-    return random.choice(USER_AGENTS)
+# ========== IN-MEMORY CACHE ==========
+pending_posts = {}  # user_id -> {file_id, file_type, poster}
+posters = {}        # user_id -> {caption, photo_id}
 
-def is_valid_proxy(proxy):
+# ========== START COMMAND ==========
+BOT_VERSION = "1.0"  # Add this near the top with your config
+
+async def is_user_joined(bot, user_id):
     try:
-        if ':' not in proxy:
-            return False
-        host, port = proxy.split(':')
-        socket.inet_aton(host)
-        return 1 <= int(port) <= 65535
+        member = await bot.get_chat_member(chat_id=PUBLIC_CHANNEL_ID, user_id=user_id)
+        return member.status in ["member", "administrator", "creator"]
+    except Forbidden:
+        return False  # Bot not admin in channel
     except:
         return False
 
-def detect_proxy_type(url):
-    url = url.lower()
-    if "socks5" in url:
-        return "socks5"
-    elif "socks4" in url:
-        return "socks4"
-    elif "http" in url or "https" in url:
-        return "http"
-    return "unknown"
+# ========== UTILS ==========
+def generate_code():
+    while True:
+        code = uuid.uuid4().hex[:8].upper()
+        if not movie_collection.find_one({"code": code}):
+            return code
 
-def fetch_proxies():
-    proxies_by_type = defaultdict(set)
-    for src in PROXY_SOURCES:
-        try:
-            print(f"[+] Fetching: {src}")
-            r = requests.get(src, headers={'User-Agent': get_random_user_agent()}, timeout=15)
-            if r.status_code == 200:
-                lines = r.text.strip().splitlines()
-                valid = [p.strip() for p in lines if is_valid_proxy(p.strip())]
-                ptype = detect_proxy_type(src)
-                proxies_by_type[ptype].update(valid)
-                print(f"  → {len(valid)} valid {ptype.upper()} proxies")
-        except Exception as e:
-            print(f"  → Error: {e}")
-    return proxies_by_type
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_id = user.id
 
-def get_proxy_config(proxy, proxy_type):
-    scheme = {
-        "http": "http",
-        "socks4": "socks4",
-        "socks5": "socks5"
-    }.get(proxy_type, "http")
-    return {
-        "http": f"{scheme}://{proxy}",
-        "https": f"{scheme}://{proxy}"
+    # ✅ Save user if new
+    if not all_users_collection.find_one({"user_id": user_id}):
+        all_users_collection.insert_one({"user_id": user_id})
+
+    # Check for deep link code
+    args = context.args
+    if args:
+        code = args[0]
+
+        # 🔐 Check if user has joined the channel
+        if not await is_user_joined(context.bot, user_id):
+            await update.message.reply_text(
+                f"🔒 **Please join [MovieHub™]({CHANNEL_LINK}) to access this content.**",
+                parse_mode="Markdown",
+                disable_web_page_preview=True
+            )
+            return
+
+        movie = movie_collection.find_one({"code": code})
+        if movie:
+            file_type = movie["file_type"]
+            file_id = movie["file_id"]
+            if file_type == "document":
+                await update.message.reply_document(file_id)
+            else:
+                await update.message.reply_video(file_id)
+        else:
+            await update.message.reply_text("⚠️ This link is invalid or expired.")
+        return
+
+    # Admin welcome
+    if user_id == OWNER_ID:
+        await update.message.reply_text(
+            "🎬 Send a movie poster first (with optional caption), then the movie file."
+        )
+        return
+
+    # User welcome
+    await update.message.reply_text(
+        f"**🎬 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 𝐭𝐨 𝐌𝐨𝐯𝐢𝐞𝐇𝐮𝐛™ – 𝐘𝐨𝐮𝐫 𝐔𝐥𝐭𝐢𝐦𝐚𝐭𝐞 𝐌𝐨𝐯𝐢𝐞 𝐃𝐞𝐬𝐭𝐢𝐧𝐚𝐭𝐢𝐨𝐧!**\n"
+        f"**🤖 𝐕𝐞𝐫𝐬𝐢𝐨𝐧: {BOT_VERSION}**\n\n"
+        f"**🎞️ 𝐒𝐭𝐚𝐲 𝐭𝐮𝐧𝐞𝐝 𝐟𝐨𝐫 𝐭𝐡𝐞 𝐥𝐚𝐭𝐞𝐬𝐭 𝐝𝐫𝐨𝐩𝐬 𝐨𝐧 𝐨𝐮𝐫 [𝐜𝐡𝐚𝐧𝐧𝐞𝐥]({CHANNEL_LINK})!**",
+        parse_mode="Markdown",
+        disable_web_page_preview=True
+    )
+
+
+# ========== POSTER HANDLER ==========
+async def handle_poster_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != OWNER_ID:
+        return
+
+    photo = update.message.photo[-1]
+    caption = update.message.caption or ""  # Accept empty caption
+
+    posters[user_id] = {
+        "caption": caption,
+        "photo_id": photo.file_id
     }
 
-def quick_test_proxy(proxy, proxy_type):
+    await update.message.reply_text("✅ Poster saved. Now send the movie file (ZIP/video/document).")
+
+# ========== MOVIE UPLOAD ==========
+async def handle_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != OWNER_ID:
+        await update.message.reply_text("🚫 You are not allowed to upload.")
+        return
+
+    file = update.message.video or update.message.document
+    if not file:
+        await update.message.reply_text("❗ Please send a valid video or document file.")
+        return
+
+    poster = posters.get(user.id)
+    if not poster:
+        await update.message.reply_text("❗ Please send the poster image first.")
+        return
+
+    pending_posts[user.id] = {
+        "file_id": file.file_id,
+        "file_type": "document" if update.message.document else "video",
+        "poster": poster
+    }
+
+    keyboard = ReplyKeyboardMarkup(
+        [[KeyboardButton("✅ Confirm Upload"), KeyboardButton("❌ Cancel Upload")]],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+    await update.message.reply_text("✅ File received. Choose an option:", reply_markup=keyboard)
+
+# ========== HANDLE REPLY CHOICE ==========
+async def handle_reply_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text
+
+    if user_id != OWNER_ID:
+        await update.message.reply_text("🚫 Not authorized.")
+        return
+
+    if text == "✅ Confirm Upload":
+        pending = pending_posts.get(user_id)
+        if not pending:
+            await update.message.reply_text("⚠️ No pending post to confirm.")
+            return
+
+        code = generate_code()
+
+        # Send file to dump channel with file info
+        dump_caption = (
+            "🎬 Uploaded by Admin\n\n"
+            f"Code: `{code}`\n"
+            f"File ID: `{pending['file_id']}`\n"
+            f"Type: `{pending['file_type']}`"
+        )
+        await context.bot.send_document(
+            chat_id=DUMP_CHANNEL_ID,
+            document=pending["file_id"],
+            caption=dump_caption,
+            parse_mode="Markdown"
+        )
+
+        # Save file details to MongoDB
+        movie_collection.insert_one({
+            "code": code,
+            "file_id": pending["file_id"],
+            "file_type": pending["file_type"]
+        })
+
+        # Generate deep link and publish to public channel
+        bot_username = (await context.bot.get_me()).username
+        deep_link = f"https://t.me/{bot_username}?start={code}"
+        button = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📥 Download Movie", url=deep_link)]
+        ])
+
+        base_caption = pending["poster"]["caption"]
+        final_caption = (base_caption + "\n\n👇 Click below to download") if base_caption else "👇 Click below to download"
+
+        await context.bot.send_photo(
+            chat_id=PUBLIC_CHANNEL_ID,
+            photo=pending["poster"]["photo_id"],
+            caption=final_caption,
+            reply_markup=button
+        )
+
+        # Notify and clean up
+        await update.message.reply_text("✅ Uploaded successfully.", reply_markup=ReplyKeyboardRemove())
+        posters.pop(user_id, None)
+        pending_posts.pop(user_id, None)
+
+    elif text == "❌ Cancel Upload":
+        if pending_posts.pop(user_id, None):
+            await update.message.reply_text("❌ Upload cancelled.", reply_markup=ReplyKeyboardRemove())
+        else:
+            await update.message.reply_text("⚠️ No pending upload found.", reply_markup=ReplyKeyboardRemove())
+
+
+# Broadcast command handler
+async def broadcast_message(self, message: Message, user_id: int):
+    """Send a message to a single user"""
     try:
-        config = get_proxy_config(proxy, proxy_type)
-        r = requests.get(random.choice(TEST_URLS), proxies=config,
-                         headers={'User-Agent': get_random_user_agent()},
-                         timeout=PHASE1_TIMEOUT)
-        return r.status_code == 200
-    except:
-        return False
+        caption = message.caption if message.caption else None
+        reply_markup = message.reply_markup if message.reply_markup else None
 
-def stability_test_proxy(proxy, proxy_type):
-    config = get_proxy_config(proxy, proxy_type)
-    end_time = time.time() + PHASE2_TIMEOUT
-    while time.time() < end_time:
+        if message.text:
+            await self.app.send_message(
+                chat_id=user_id,
+                text=message.text,
+                entities=message.entities,
+                reply_markup=reply_markup,
+                disable_notification=True
+            )
+        elif message.photo:
+            await self.app.send_photo(
+                chat_id=user_id,
+                photo=message.photo.file_id,
+                caption=caption,
+                caption_entities=message.caption_entities,
+                reply_markup=reply_markup,
+                disable_notification=True
+            )
+        elif message.video:
+            await self.app.send_video(
+                chat_id=user_id,
+                video=message.video.file_id,
+                caption=caption,
+                caption_entities=message.caption_entities,
+                reply_markup=reply_markup,
+                disable_notification=True
+            )
+        elif message.audio:
+            await self.app.send_audio(
+                chat_id=user_id,
+                audio=message.audio.file_id,
+                caption=caption,
+                caption_entities=message.caption_entities,
+                reply_markup=reply_markup,
+                disable_notification=True
+            )
+        elif message.document:
+            await self.app.send_document(
+                chat_id=user_id,
+                document=message.document.file_id,
+                caption=caption,
+                caption_entities=message.caption_entities,
+                reply_markup=reply_markup,
+                disable_notification=True
+            )
+        elif message.animation:
+            await self.app.send_animation(
+                chat_id=user_id,
+                animation=message.animation.file_id,
+                caption=caption,
+                caption_entities=message.caption_entities,
+                reply_markup=reply_markup,
+                disable_notification=True
+            )
+        elif message.sticker:
+            await self.app.send_sticker(
+                chat_id=user_id,
+                sticker=message.sticker.file_id,
+                disable_notification=True
+            )
+        elif message.voice:
+            await self.app.send_voice(
+                chat_id=user_id,
+                voice=message.voice.file_id,
+                caption=caption,
+                caption_entities=message.caption_entities,
+                reply_markup=reply_markup,
+                disable_notification=True
+            )
+        elif message.video_note:
+            await self.app.send_video_note(
+                chat_id=user_id,
+                video_note=message.video_note.file_id,
+                disable_notification=True
+            )
+
+        return True, ""
+
+    except FloodWait as e:
+        await asyncio.sleep(e.value)
+        return await self.broadcast_message(message, user_id)
+    
+    except InputUserDeactivated:
+        return False, "deactivated"
+    except UserIsBlocked:
+        return False, "blocked"
+    except PeerIdInvalid:
+        return False, "invalid_id"
+    except Exception as e:
+        return False, f"other:{str(e)}"
+
+async def broadcast_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    message = update.message
+
+    if user_id != OWNER_ID:
+        await message.reply_text("⛔️ You are not authorized to use this command!")
+        return
+
+    # Get the message to broadcast
+    if message.reply_to_message:
+        broadcast_content = message.reply_to_message
+    elif context.args:
+        broadcast_content = " ".join(context.args)
+    else:
+        await message.reply_text("❗️ Please reply to a message or type a message to broadcast.")
+        return
+
+    status_msg = await message.reply_text("🚀 Starting broadcast...")
+
+    total_users = all_users_collection.count_documents({})
+    done = success = failed = blocked = deleted = invalid = 0
+    failed_users = []
+
+    users_list = list(all_users_collection.find({}, {'user_id': 1}))
+
+    for user in users_list:
+        done += 1
         try:
-            r = requests.get(random.choice(TEST_URLS), proxies=config,
-                             headers={'User-Agent': get_random_user_agent()},
-                             timeout=5)
-            if r.status_code != 200:
-                return False
-        except:
-            return False
-        time.sleep(random.uniform(1, 2))
-    return True
+            if isinstance(broadcast_content, str):
+                await context.bot.send_message(chat_id=user['user_id'], text=broadcast_content)
+            else:
+                # **Forward the original message** with "forwarded from" header
+                await context.bot.forward_message(
+                    chat_id=user['user_id'],
+                    from_chat_id=broadcast_content.chat.id,
+                    message_id=broadcast_content.message_id
+                )
+            success += 1
+        except TelegramError as e:
+            failed += 1
+            failed_users.append((user['user_id'], str(e)))
+            if "blocked" in str(e):
+                blocked += 1
+            elif "deactivated" in str(e):
+                deleted += 1
+            elif "invalid" in str(e):
+                invalid += 1
 
-def update_proxies():
-    start = time.time()
-    proxies_by_type = fetch_proxies()
+        if done % 20 == 0:
+            try:
+                await status_msg.edit_text(
+                    f"🚀 Broadcast in Progress...\n\n"
+                    f"👥 Total Users: {total_users}\n"
+                    f"✅ Completed: {done} / {total_users}\n"
+                    f"✨ Success: {success}\n"
+                    f"⚠️ Failed: {failed}\n\n"
+                    f"🚫 Blocked: {blocked}\n"
+                    f"❗️ Deleted: {deleted}\n"
+                    f"📛 Invalid: {invalid}"
+                )
+            except Exception:
+                pass
 
-    for ptype, proxies in proxies_by_type.items():
-        if ptype == "unknown":
-            continue
+    await status_msg.edit_text(
+        f"✅ Broadcast Completed!\n"
+        f"👥 Total Users: {total_users}\n"
+        f"✨ Success: {success}\n"
+        f"⚠️ Failed: {failed}\n"
+        f"🚫 Blocked: {blocked}\n"
+        f"❗️ Deleted: {deleted}\n"
+        f"📛 Invalid: {invalid}"
+    )
 
-        print(f"\n🧪 Phase 1: {ptype.upper()} - Quick test {len(proxies)} proxies...\n")
-        phase1 = []
-        lock1 = threading.Lock()
+    if failed_users:
+        clean_msg = await message.reply_text("🧹 Cleaning database... Removing invalid users.")
+        invalid_user_ids = [uid for uid, _ in failed_users]
+        result = all_users_collection.delete_many({"user_id": {"$in": invalid_user_ids}})
+        await clean_msg.edit_text(f"🧹 Database cleaned! Removed {result.deleted_count} invalid users.")
+# ========== BOT SETUP ==========
+app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-        def phase1_worker(proxy):
-            if quick_test_proxy(proxy, ptype):
-                with lock1:
-                    phase1.append(proxy)
-                    print(f"[✓] Phase 1 ({ptype}): {proxy}")
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("broadcast", broadcast_handler))
+app.add_handler(MessageHandler(filters.PHOTO, handle_poster_photo))
+app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO, handle_upload))
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^(✅ Confirm Upload|❌ Cancel Upload)$"), handle_reply_choice))
 
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            executor.map(phase1_worker, proxies)
-
-        print(f"\n✅ {ptype.upper()} Phase 1 done: {len(phase1)} passed quick check\n")
-
-        print(f"⏳ Phase 2: {ptype.upper()} - Stability test (30s each)\n")
-        final = []
-        lock2 = threading.Lock()
-
-        def phase2_worker(proxy):
-            if len(final) >= MAX_FINAL_PROXIES:
-                return
-            if stability_test_proxy(proxy, ptype):
-                with lock2:
-                    if len(final) < MAX_FINAL_PROXIES:
-                        final.append(proxy)
-                        print(f"[★] {ptype.upper()} Stable ({len(final)}/{MAX_FINAL_PROXIES}): {proxy}")
-
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            executor.map(phase2_worker, phase1)
-
-        with open(f"proxies_{ptype}.json", "w") as f:
-            json.dump(final, f, indent=2)
-
-        print(f"✔️ Final working {ptype.upper()} proxies: {len(final)} saved to proxies_{ptype}.json")
-
-    print(f"\n🎉 All done in {time.time() - start:.2f}s")
 
 if __name__ == "__main__":
-    update_proxies()
+    print("✅ Movie bot is running with optional caption support!")
+    app.run_polling()
